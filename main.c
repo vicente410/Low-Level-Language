@@ -306,6 +306,8 @@ typedef enum {
     AST_OP,
     AST_BLOCK,
     AST_IFTE,
+    AST_DECL_MUT,
+    AST_DECL_CONST,
 } AstKind;
 
 typedef struct {
@@ -325,6 +327,12 @@ typedef struct {
     struct Ast *else_branch;
 } Ifte;
 
+typedef struct {
+    String_View name;
+    struct Ast *type;
+    struct Ast *value;
+} Decl;
+
 typedef struct Ast {
     AstKind kind;
     union {
@@ -335,6 +343,7 @@ typedef struct Ast {
         Call call;
         Asts block;
         Ifte ifte;
+        Decl decl;
     } as;
 } Ast;
 
@@ -344,9 +353,9 @@ String_View ast_to_sv(Ast *ast, size_t indent) {
     for (size_t i = 0; i < indent; i++) sb_appendf(&sb, "    ");
     
     switch (ast->kind) {
-    case AST_ID:           sb_appendf(&sb, "ID("SV_FMT")", SV_ARG(ast->as.id)); break;
-    case AST_INT_LIT:      sb_appendf(&sb, "INT(%d)", ast->as.int_lit); break;
-    case AST_STRING_LIT:   sb_appendf(&sb, "STRING("SV_FMT")", SV_ARG(ast->as.string_lit)); break;
+    case AST_ID:         sb_appendf(&sb, "ID("SV_FMT")", SV_ARG(ast->as.id)); break;
+    case AST_INT_LIT:    sb_appendf(&sb, "INT(%d)", ast->as.int_lit); break;
+    case AST_STRING_LIT: sb_appendf(&sb, "STRING("SV_FMT")", SV_ARG(ast->as.string_lit)); break;
     case AST_OP: {
         String_View lhs_sv = ast_to_sv(ast->as.op.lhs, indent + 1);
         String_View rhs_sv = ast_to_sv(ast->as.op.rhs, indent + 1);
@@ -385,9 +394,59 @@ String_View ast_to_sv(Ast *ast, size_t indent) {
             sb_appendf(&sb, SV_FMT, SV_ARG(else_sv));
         }
     } break;
+    case AST_DECL_CONST:
+    case AST_DECL_MUT: {
+        if (ast->kind == AST_DECL_CONST) {
+            sb_appendf(&sb, "DECL_CONST");
+        } else {
+            sb_appendf(&sb, "DECL_MUT");
+        }
+        
+        sb_appendf(&sb, "("SV_FMT")", SV_ARG(ast->as.decl.name));
+        
+        if (ast->as.decl.type != NULL) {
+            String_View type_sv = ast_to_sv(ast->as.decl.type, indent + 1);
+            sb_appendf(&sb, "\n"SV_FMT, SV_ARG(type_sv));
+        }
+        
+        if (ast->as.decl.value != NULL) {
+            String_View value_sv = ast_to_sv(ast->as.decl.value, indent + 1);
+            sb_appendf(&sb, "\n"SV_FMT, SV_ARG(value_sv));
+        }
+    } break;
     }
     
     return sv_from_sb(sb);
+}
+
+Ast *parse_type(Lexer *lexer) {
+    Ast *result;
+    Token token = next_token(lexer);
+    
+    if (token.kind == TOKEN_ID) {
+        result = malloc(sizeof(Ast));
+        result->kind = AST_ID;
+        result->as.id = token.as.id;
+    } else {
+        fprintf(stderr, "Error: syntax error\n");
+        exit(1);
+    }
+    
+    if (accept_token(lexer, TOKEN_OPEN_PAREN)) {
+        Ast *new_result = malloc(sizeof(Ast));
+        new_result->kind = AST_CALL;
+        new_result->as.call.fn = result;
+        result = new_result;
+        
+        while (!accept_token(lexer, TOKEN_CLOSE_PAREN)) {
+            da_push(&result->as.call.args, parse_type(lexer));
+            if (peek_token(lexer).kind != TOKEN_CLOSE_PAREN) {
+                expect_token(lexer, TOKEN_COMMA);
+            }
+        }
+    }
+    
+    return result;
 }
 
 Ast *parse_expr(Lexer *lexer, size_t precedence);
@@ -398,8 +457,26 @@ Ast *parse_factor(Lexer *lexer) {
     
     if (token.kind == TOKEN_ID) {
         result = malloc(sizeof(Ast));
-        result->kind = AST_ID;
-        result->as.id = token.as.id;
+        
+        if (accept_token(lexer, TOKEN_COLON)) {
+            result->kind = AST_DECL_MUT;
+            result->as.decl.name = token.as.id;
+            
+            if (peek_token(lexer).kind != TOKEN_COLON &&
+                peek_token(lexer).kind != TOKEN_EQUAL) {
+                result->as.decl.type = parse_type(lexer);
+            }
+            
+            if (accept_token(lexer, TOKEN_EQUAL)) {
+                result->as.decl.value = parse_expr(lexer, 0);
+            } else if (accept_token(lexer, TOKEN_COLON)) {
+                result->kind = AST_DECL_CONST;
+                result->as.decl.value = parse_expr(lexer, 0);
+            }
+        } else {
+            result->kind = AST_ID;
+            result->as.id = token.as.id;
+        }
     } else if (token.kind == TOKEN_INT_LIT) {
         result = malloc(sizeof(Ast));
         result->kind = AST_INT_LIT;
@@ -417,9 +494,9 @@ Ast *parse_factor(Lexer *lexer) {
         
         while (!accept_token(lexer, TOKEN_CLOSE_CURLY)) {
             da_push(&result->as.block, parse_expr(lexer, 0));
-            if (peek_token(lexer).kind != TOKEN_CLOSE_CURLY) {
+            /*if (peek_token(lexer).kind != TOKEN_CLOSE_CURLY) {
                 expect_token(lexer, TOKEN_SEMICOLON);
-            }
+            }*/
         }
     } else if (token.kind == TOKEN_IF) {
         result = malloc(sizeof(Ast));
