@@ -22,6 +22,8 @@ typedef enum {
     TOKEN_OPEN_CURLY,
     TOKEN_CLOSE_CURLY,
     TOKEN_RETURN,
+    TOKEN_IF,
+    TOKEN_ELSE,
     TOKEN_FN,
     TOKEN_STRUCT,
     TOKEN_UNION,
@@ -83,6 +85,8 @@ String_View token_to_sv(Token token) {
     case TOKEN_OPEN_CURLY:  sb_appendf(&sb, "TOKEN_OPEN_CURLY"); break;
     case TOKEN_CLOSE_CURLY: sb_appendf(&sb, "TOKEN_CLOSE_CURLY"); break;
     case TOKEN_RETURN:      sb_appendf(&sb, "TOKEN_RETURN"); break;
+    case TOKEN_IF:          sb_appendf(&sb, "TOKEN_IF"); break;
+    case TOKEN_ELSE:        sb_appendf(&sb, "TOKEN_ELSE"); break;
     case TOKEN_FN:          sb_appendf(&sb, "TOKEN_FN"); break;
     case TOKEN_STRUCT:      sb_appendf(&sb, "TOKEN_STRUCT"); break;
     case TOKEN_UNION:       sb_appendf(&sb, "TOKEN_UNION"); break;
@@ -148,6 +152,10 @@ Token read_id_or_keyword(Lexer *lexer) {
 
     if (sv_eq_cstr(sv_from_sb(sb), "return")) {
         token.kind = TOKEN_RETURN;
+    } else if (sv_eq_cstr(sv_from_sb(sb), "if")) {
+        token.kind = TOKEN_IF;
+    } else if (sv_eq_cstr(sv_from_sb(sb), "else")) {
+        token.kind = TOKEN_ELSE;
     } else if (sv_eq_cstr(sv_from_sb(sb), "fn")) {
         token.kind = TOKEN_FN;
     } else if (sv_eq_cstr(sv_from_sb(sb), "struct")) {
@@ -293,8 +301,11 @@ typedef struct {
 typedef enum {
     AST_ID,
     AST_INT_LIT,
+    AST_STRING_LIT,
     AST_CALL,
     AST_OP,
+    AST_BLOCK,
+    AST_IFTE,
 } AstKind;
 
 typedef struct {
@@ -308,49 +319,72 @@ typedef struct {
     Asts args;
 } Call;
 
+typedef struct {
+    struct Ast *cond;
+    struct Ast *then_branch;
+    struct Ast *else_branch;
+} Ifte;
+
 typedef struct Ast {
     AstKind kind;
     union {
         String_View id;
         int int_lit;
+        String_View string_lit;
         Op op;
         Call call;
+        Asts block;
+        Ifte ifte;
     } as;
 } Ast;
 
-String_View ast_to_sv(Ast *ast) {
+String_View ast_to_sv(Ast *ast, size_t indent) {
     String_Builder sb = {};
     
+    for (size_t i = 0; i < indent; i++) sb_appendf(&sb, "    ");
+    
     switch (ast->kind) {
-    case AST_ID:           da_append(&sb, &ast->as.id); break;
-    case AST_INT_LIT:      sb_appendf(&sb, "%d", ast->as.int_lit); break;
+    case AST_ID:           sb_appendf(&sb, "ID("SV_FMT")", SV_ARG(ast->as.id)); break;
+    case AST_INT_LIT:      sb_appendf(&sb, "INT(%d)", ast->as.int_lit); break;
+    case AST_STRING_LIT:   sb_appendf(&sb, "STRING("SV_FMT")", SV_ARG(ast->as.string_lit)); break;
     case AST_OP: {
-        String_View lhs_sv = ast_to_sv(ast->as.op.lhs);
-        String_View rhs_sv = ast_to_sv(ast->as.op.rhs);
-        sb_appendf(
-            &sb,
-            "("SV_FMT" "SV_FMT" "SV_FMT")",
-            SV_ARG(lhs_sv),
-            SV_ARG(ast->as.op.op),
-            SV_ARG(rhs_sv)
-        );
+        String_View lhs_sv = ast_to_sv(ast->as.op.lhs, indent + 1);
+        String_View rhs_sv = ast_to_sv(ast->as.op.rhs, indent + 1);
+        sb_appendf(&sb, "OP("SV_FMT")\n", SV_ARG(ast->as.op.op));
+        sb_appendf(&sb, SV_FMT"\n", SV_ARG(lhs_sv));
+        sb_appendf(&sb, SV_FMT, SV_ARG(rhs_sv));
     } break;
     case AST_CALL: {
-        String_View fn_sv = ast_to_sv(ast->as.call.fn);
+        String_View fn_sv = ast_to_sv(ast->as.call.fn, indent + 1);
+        sb_appendf(&sb, "CALL\n");
         sb_appendf(&sb, SV_FMT, SV_ARG(fn_sv));
-        sb_appendf(&sb, "(");
         
         for (size_t i = 0; i < ast->as.call.args.count; i++) {
-            if (i != 0) sb_appendf(&sb, ", ");
-            String_View arg_sv = ast_to_sv(ast->as.call.args.data[i]);
-            sb_appendf(&sb, SV_FMT, SV_ARG(arg_sv));
+            String_View arg_sv = ast_to_sv(ast->as.call.args.data[i], indent + 1);
+            sb_appendf(&sb, "\n"SV_FMT, SV_ARG(arg_sv));
         }
-        
-        sb_appendf(&sb, ")");
     } break;
-    default:
-        fprintf(stderr, "UNREACHABLE\n");
-        exit(1);
+    case AST_BLOCK: {
+        sb_appendf(&sb, "BLOCK\n");
+        
+        for (size_t i = 0; i < ast->as.block.count; i++) {
+            String_View expr_sv = ast_to_sv(ast->as.block.data[i], indent + 1);
+            sb_appendf(&sb, SV_FMT, SV_ARG(expr_sv));
+            if (i < ast->as.block.count - 1) sb_appendf(&sb, "\n");
+        }
+    } break;
+    case AST_IFTE: {
+        String_View cond_sv = ast_to_sv(ast->as.ifte.cond, indent + 1);
+        String_View then_sv = ast_to_sv(ast->as.ifte.then_branch, indent + 1);
+        sb_appendf(&sb, "IFTE\n");
+        sb_appendf(&sb, SV_FMT"\n", SV_ARG(cond_sv));
+        sb_appendf(&sb, SV_FMT"\n", SV_ARG(then_sv));
+        
+        if (ast->as.ifte.else_branch != NULL) {
+            String_View else_sv = ast_to_sv(ast->as.ifte.else_branch, indent + 1);
+            sb_appendf(&sb, SV_FMT, SV_ARG(else_sv));
+        }
+    } break;
     }
     
     return sv_from_sb(sb);
@@ -370,9 +404,31 @@ Ast *parse_factor(Lexer *lexer) {
         result = malloc(sizeof(Ast));
         result->kind = AST_INT_LIT;
         result->as.int_lit = token.as.int_lit;
+    } else if (token.kind == TOKEN_STRING_LIT) {
+        result = malloc(sizeof(Ast));
+        result->kind = AST_STRING_LIT;
+        result->as.string_lit = token.as.string_lit;
     } else if (token.kind == TOKEN_OPEN_PAREN) {
         result = parse_expr(lexer, 0);
         expect_token(lexer, TOKEN_CLOSE_PAREN);
+    } else if (token.kind == TOKEN_OPEN_CURLY) {
+        result = malloc(sizeof(Ast));
+        result->kind = AST_BLOCK;
+        
+        while (!accept_token(lexer, TOKEN_CLOSE_CURLY)) {
+            da_push(&result->as.block, parse_expr(lexer, 0));
+            if (peek_token(lexer).kind != TOKEN_CLOSE_CURLY) {
+                expect_token(lexer, TOKEN_SEMICOLON);
+            }
+        }
+    } else if (token.kind == TOKEN_IF) {
+        result = malloc(sizeof(Ast));
+        result->kind = AST_IFTE;
+        result->as.ifte.cond = parse_expr(lexer, 0);
+        result->as.ifte.then_branch = parse_expr(lexer, 0);
+        if (accept_token(lexer, TOKEN_ELSE)) {
+            result->as.ifte.else_branch = parse_expr(lexer, 0);
+        }
     } else {
         fprintf(stderr, "Error: syntax error\n");
         exit(1);
@@ -439,7 +495,7 @@ int main(int argc, char **argv) {
     lexer_init(&lexer, program_name);
     Ast *ast = parse_expr(&lexer, 0);
     
-    String_View ast_sv = ast_to_sv(ast);
+    String_View ast_sv = ast_to_sv(ast, 0);
     printf(SV_FMT"\n", SV_ARG(ast_sv));
     
     /*for (size_t i = 0; i < asts.count; i++) {
