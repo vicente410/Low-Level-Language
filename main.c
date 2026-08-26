@@ -308,6 +308,7 @@ typedef enum {
     AST_IFTE,
     AST_DECL_MUT,
     AST_DECL_CONST,
+    AST_FN,
 } AstKind;
 
 typedef struct {
@@ -333,6 +334,23 @@ typedef struct {
     struct Ast *value;
 } Decl;
 
+typedef struct {
+    String_View name;
+    struct Ast *type;
+} Arg;
+
+typedef struct {
+    Arg *data;
+    size_t count;
+    size_t capacity;
+} Args;
+
+typedef struct {
+    Args args;
+    struct Ast *ret_type;
+    struct Ast *body;
+} Fn;
+
 typedef struct Ast {
     AstKind kind;
     union {
@@ -344,6 +362,7 @@ typedef struct Ast {
         Asts block;
         Ifte ifte;
         Decl decl;
+        Fn fn;
     } as;
 } Ast;
 
@@ -413,6 +432,25 @@ String_View ast_to_sv(Ast *ast, size_t indent) {
             String_View value_sv = ast_to_sv(ast->as.decl.value, indent + 1);
             sb_appendf(&sb, "\n"SV_FMT, SV_ARG(value_sv));
         }
+    } break;
+    case AST_FN: {
+        sb_appendf(&sb, "FN");
+        
+        for (size_t i = 0; i < ast->as.fn.args.count; i++) {
+            sb_appendf(&sb, "\n");
+            for (size_t i = 0; i < indent + 1; i++) sb_appendf(&sb, "    ");
+            sb_appendf(&sb, SV_FMT, SV_ARG(ast->as.fn.args.data[i].name));
+            String_View arg_type_sv = ast_to_sv(ast->as.fn.args.data[i].type, indent + 1);
+            sb_appendf(&sb, "\n"SV_FMT, SV_ARG(arg_type_sv));
+        }
+        
+        if (ast->as.fn.ret_type != NULL) {
+            String_View ret_type_sv = ast_to_sv(ast->as.fn.ret_type, indent + 1);
+            sb_appendf(&sb, "\n"SV_FMT, SV_ARG(ret_type_sv));
+        }
+        
+        String_View body_sv = ast_to_sv(ast->as.fn.body, indent + 1);
+        sb_appendf(&sb, "\n"SV_FMT, SV_ARG(body_sv));
     } break;
     }
     
@@ -506,6 +544,30 @@ Ast *parse_factor(Lexer *lexer) {
         if (accept_token(lexer, TOKEN_ELSE)) {
             result->as.ifte.else_branch = parse_expr(lexer, 0);
         }
+    } else if (token.kind == TOKEN_FN) {
+        result = malloc(sizeof(Ast));
+        result->kind = AST_FN;
+        expect_token(lexer, TOKEN_OPEN_PAREN);
+        
+        while (!accept_token(lexer, TOKEN_CLOSE_PAREN)) {
+            Arg arg = {};
+            assert(peek_token(lexer).kind == TOKEN_ID);
+            arg.name = next_token(lexer).as.id;
+            expect_token(lexer, TOKEN_COLON);
+            arg.type = parse_type(lexer);
+            da_push(&result->as.fn.args, arg);
+            
+            if (peek_token(lexer).kind != TOKEN_CLOSE_PAREN) {
+                expect_token(lexer, TOKEN_COMMA);
+            }
+        }
+        
+        if (peek_token(lexer).kind == TOKEN_OP && sv_eq(peek_token(lexer).as.op, sv_from_cstr("->"))) {
+            next_token(lexer);
+            result->as.fn.ret_type = parse_type(lexer);
+        }
+        
+        result->as.fn.body = parse_expr(lexer, 0);
     } else {
         fprintf(stderr, "Error: syntax error\n");
         exit(1);
