@@ -309,6 +309,7 @@ typedef enum {
     AST_DECL_MUT,
     AST_DECL_CONST,
     AST_FN,
+    AST_FN_TYPE,
 } AstKind;
 
 typedef struct {
@@ -351,6 +352,11 @@ typedef struct {
     struct Ast *body;
 } Fn;
 
+typedef struct {
+    Asts args_types;
+    struct Ast *ret_type;
+} FnType;
+
 typedef struct Ast {
     AstKind kind;
     union {
@@ -363,6 +369,7 @@ typedef struct Ast {
         Ifte ifte;
         Decl decl;
         Fn fn;
+        FnType fn_type;
     } as;
 } Ast;
 
@@ -452,6 +459,19 @@ String_View ast_to_sv(Ast *ast, size_t indent) {
         String_View body_sv = ast_to_sv(ast->as.fn.body, indent + 1);
         sb_appendf(&sb, "\n"SV_FMT, SV_ARG(body_sv));
     } break;
+    case AST_FN_TYPE: {
+        sb_appendf(&sb, "FN_TYPE");
+        
+        for (size_t i = 0; i < ast->as.fn_type.args_types.count; i++) {
+            String_View arg_type_sv = ast_to_sv(ast->as.fn_type.args_types.data[i], indent + 1);
+            sb_appendf(&sb, "\n"SV_FMT, SV_ARG(arg_type_sv));
+        }
+        
+        if (ast->as.fn.ret_type != NULL) {
+            String_View ret_type_sv = ast_to_sv(ast->as.fn.ret_type, indent + 1);
+            sb_appendf(&sb, "\n"SV_FMT, SV_ARG(ret_type_sv));
+        }
+    } break;
     }
     
     return sv_from_sb(sb);
@@ -462,16 +482,33 @@ Ast *parse_type(Lexer *lexer) {
     Token token = next_token(lexer);
     
     if (token.kind == TOKEN_ID) {
-        result = malloc(sizeof(Ast));
+        result = calloc(1, sizeof(Ast));
         result->kind = AST_ID;
         result->as.id = token.as.id;
+    } else if (token.kind == TOKEN_FN) {
+        result = calloc(1, sizeof(Ast));
+        result->kind = AST_FN_TYPE;
+        expect_token(lexer, TOKEN_OPEN_PAREN);
+        
+        while (!accept_token(lexer, TOKEN_CLOSE_PAREN)) {
+            da_push(&result->as.fn_type.args_types, parse_type(lexer));
+            
+            if (peek_token(lexer).kind != TOKEN_CLOSE_PAREN) {
+                expect_token(lexer, TOKEN_COMMA);
+            }
+        }
+        
+        if (peek_token(lexer).kind == TOKEN_OP && sv_eq(peek_token(lexer).as.op, sv_from_cstr("->"))) {
+            next_token(lexer);
+            result->as.fn_type.ret_type = parse_type(lexer);
+        }
     } else {
         fprintf(stderr, "Error: syntax error\n");
         exit(1);
     }
     
     if (accept_token(lexer, TOKEN_OPEN_PAREN)) {
-        Ast *new_result = malloc(sizeof(Ast));
+        Ast *new_result = calloc(1, sizeof(Ast));
         new_result->kind = AST_CALL;
         new_result->as.call.fn = result;
         result = new_result;
@@ -494,7 +531,7 @@ Ast *parse_factor(Lexer *lexer) {
     Token token = next_token(lexer);
     
     if (token.kind == TOKEN_ID) {
-        result = malloc(sizeof(Ast));
+        result = calloc(1, sizeof(Ast));
         
         if (accept_token(lexer, TOKEN_COLON)) {
             result->kind = AST_DECL_MUT;
@@ -516,18 +553,18 @@ Ast *parse_factor(Lexer *lexer) {
             result->as.id = token.as.id;
         }
     } else if (token.kind == TOKEN_INT_LIT) {
-        result = malloc(sizeof(Ast));
+        result = calloc(1, sizeof(Ast));
         result->kind = AST_INT_LIT;
         result->as.int_lit = token.as.int_lit;
     } else if (token.kind == TOKEN_STRING_LIT) {
-        result = malloc(sizeof(Ast));
+        result = calloc(1, sizeof(Ast));
         result->kind = AST_STRING_LIT;
         result->as.string_lit = token.as.string_lit;
     } else if (token.kind == TOKEN_OPEN_PAREN) {
         result = parse_expr(lexer, 0);
         expect_token(lexer, TOKEN_CLOSE_PAREN);
     } else if (token.kind == TOKEN_OPEN_CURLY) {
-        result = malloc(sizeof(Ast));
+        result = calloc(1, sizeof(Ast));
         result->kind = AST_BLOCK;
         
         while (!accept_token(lexer, TOKEN_CLOSE_CURLY)) {
@@ -537,7 +574,7 @@ Ast *parse_factor(Lexer *lexer) {
             }*/
         }
     } else if (token.kind == TOKEN_IF) {
-        result = malloc(sizeof(Ast));
+        result = calloc(1, sizeof(Ast));
         result->kind = AST_IFTE;
         result->as.ifte.cond = parse_expr(lexer, 0);
         result->as.ifte.then_branch = parse_expr(lexer, 0);
@@ -545,7 +582,7 @@ Ast *parse_factor(Lexer *lexer) {
             result->as.ifte.else_branch = parse_expr(lexer, 0);
         }
     } else if (token.kind == TOKEN_FN) {
-        result = malloc(sizeof(Ast));
+        result = calloc(1, sizeof(Ast));
         result->kind = AST_FN;
         expect_token(lexer, TOKEN_OPEN_PAREN);
         
@@ -574,7 +611,7 @@ Ast *parse_factor(Lexer *lexer) {
     }
     
     if (accept_token(lexer, TOKEN_OPEN_PAREN)) {
-        Ast *new_result = malloc(sizeof(Ast));
+        Ast *new_result = calloc(1, sizeof(Ast));
         new_result->kind = AST_CALL;
         new_result->as.call.fn = result;
         result = new_result;
@@ -591,10 +628,12 @@ Ast *parse_factor(Lexer *lexer) {
 }
 
 Ast *parse_expr(Lexer *lexer, size_t precedence) {
-    Ast *result = precedence == 3 ? parse_factor(lexer)
+    Ast *result = precedence == 4 ? parse_factor(lexer)
                                   : parse_expr(lexer, precedence + 1);
     
     while (peek_token(lexer).kind == TOKEN_OP && (
+        (precedence == 3 && (
+            sv_eq_cstr(peek_token(lexer).as.op, "."))) ||
         (precedence == 2 && (
             sv_eq_cstr(peek_token(lexer).as.op, "*") ||
             sv_eq_cstr(peek_token(lexer).as.op, "/"))) ||
@@ -609,7 +648,7 @@ Ast *parse_expr(Lexer *lexer, size_t precedence) {
             sv_eq_cstr(peek_token(lexer).as.op, "==") ||
             sv_eq_cstr(peek_token(lexer).as.op, "!=")))
     )) {
-        Ast *new_result = malloc(sizeof(Ast));
+        Ast *new_result = calloc(1, sizeof(Ast));
         new_result->kind = AST_OP;
         new_result->as.op.lhs = result;
         new_result->as.op.op = next_token(lexer).as.op;
@@ -632,10 +671,13 @@ int main(int argc, char **argv) {
 
     Lexer lexer = {};
     lexer_init(&lexer, program_name);
-    Ast *ast = parse_expr(&lexer, 0);
     
-    String_View ast_sv = ast_to_sv(ast, 0);
-    printf(SV_FMT"\n", SV_ARG(ast_sv));
+    while (peek_token(&lexer).kind != TOKEN_EOF) {
+        Ast *ast = parse_expr(&lexer, 0);
+ 
+        String_View ast_sv = ast_to_sv(ast, 0);
+        printf(SV_FMT"\n", SV_ARG(ast_sv));
+    }
     
     /*for (size_t i = 0; i < asts.count; i++) {
         String_View ast_sv = ast_to_sv(asts.data[i]);
