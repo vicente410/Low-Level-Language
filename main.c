@@ -13,11 +13,11 @@ typedef struct {
 
 String_View position_to_sv(Position pos) {
     String_Builder sb = {0};
-    
+
     sb_appendf(&sb, SV_FMT":", SV_ARG(pos.filename));
     sb_appendf(&sb, "%zu:", pos.line);
     sb_appendf(&sb, "%zu:", pos.col);
-    
+
     return sv_from_sb(sb);
 }
 
@@ -74,7 +74,7 @@ bool lexer_init(Lexer *lexer, char *filename) {
 
 String_View token_to_sv(Token token) {
     String_Builder sb = {};
-    
+
     switch (token.kind) {
     case TOKEN_EOF:        sb_appendf(&sb, "TOKEN_EOF"); break;
     case TOKEN_ID:         sb_appendf(&sb, "TOKEN_ID("SV_FMT")", SV_ARG(token.as.id)); break;
@@ -91,13 +91,13 @@ String_View token_to_sv(Token token) {
         fprintf(stderr, "UNREACHABLE\n");
         exit(1);
     }
- 
+
     return sv_from_sb(sb);
 }
 
 char next_char(Lexer *lexer) {
     char ch;
-    
+
     if (lexer->has_peeked_char) {
         lexer->has_peeked_char = false;
         ch = lexer->peeked_char;
@@ -128,14 +128,14 @@ bool accept_char(Lexer *lexer, char ch) {
         next_char(lexer);
         return true;
     }
-    
+
     return false;
 }
 
 Token read_id(Lexer *lexer) {
     Token token = {};
     String_Builder sb = {};
-    
+
     token.pos = lexer->pos;
     token.kind = TOKEN_ID;
 
@@ -149,9 +149,9 @@ Token read_id(Lexer *lexer) {
 
 Token read_int_lit(Lexer *lexer) {
     Token token = {};
-    
+
     token.pos = lexer->pos;
-    
+
     int int_lit = next_char(lexer) - '0';
 
     while(isdigit(peek_char(lexer))) {
@@ -161,7 +161,7 @@ Token read_int_lit(Lexer *lexer) {
 
     token.kind = TOKEN_INT_LIT;
     token.as.int_lit = int_lit;
-    
+
     return token;
 }
 
@@ -169,26 +169,26 @@ Token read_string_lit(Lexer *lexer) {
     Token token = {};
     String_Builder sb = {};
     char ch;
-    
+
     token.pos = lexer->pos;
-    
+
     next_char(lexer);
     while ((ch = next_char(lexer)) != '"') {
         da_push(&sb, ch);
     }
-    
+
     token.kind = TOKEN_STRING_LIT;
     token.as.string_lit = sv_from_sb(sb);
-    
+
     return token;
 }
 
 Token read_symbol(Lexer *lexer) {
     Token token = {};
     char ch = next_char(lexer);
-    
+
     token.pos = lexer->pos;
-    
+
     switch (ch) {
     case ':': token.kind = TOKEN_COLON; break;
     case ';': token.kind = TOKEN_SEMICOLON; break;
@@ -199,7 +199,7 @@ Token read_symbol(Lexer *lexer) {
     default:
         assert(false);
     }
-    
+
     return token;
 }
 
@@ -246,7 +246,7 @@ bool accept_token(Lexer *lexer, TokenKind kind) {
         next_token(lexer);
         return true;
     }
-    
+
     return false;
 }
 
@@ -258,7 +258,7 @@ typedef struct {
     struct Term **data;
     size_t count;
     size_t capacity;
-} Terms; 
+} Terms;
 
 typedef enum {
     TERM_WORD,
@@ -290,16 +290,16 @@ typedef struct {
 
 String_View term_to_sv(Term *term, size_t indent) {
     String_Builder sb = {};
-    
+
     for (size_t i = 0; i < indent; i++) sb_appendf(&sb, "    ");
-    
+
     switch (term->kind) {
     case TERM_WORD:       sb_appendf(&sb, "WORD("SV_FMT")", SV_ARG(term->as.word)); break;
     case TERM_INT_LIT:    sb_appendf(&sb, "INT(%d)", term->as.int_lit); break;
     case TERM_STRING_LIT: sb_appendf(&sb, "STRING("SV_FMT")", SV_ARG(term->as.string_lit)); break;
     case TERM_QUOTATION: {
         sb_appendf(&sb, "QUOTATION\n");
-        
+
         for (size_t i = 0; i < term->as.quotation.count; i++) {
             String_View term_sv = term_to_sv(term->as.quotation.data[i], indent + 1);
             sb_appendf(&sb, SV_FMT, SV_ARG(term_sv));
@@ -313,9 +313,9 @@ String_View term_to_sv(Term *term, size_t indent) {
 
 String_View def_to_sv(Def* def, size_t indent) {
     String_Builder sb = {};
-    
+
     for (size_t i = 0; i < indent; i++) sb_appendf(&sb, "    ");
-    
+
     sb_appendf(&sb, "DEF "SV_FMT"\n", SV_ARG(def->name));
     for (size_t i = 0; i < def->terms.count; i++) {
         String_View term_sv = term_to_sv(def->terms.data[i], indent + 1);
@@ -329,7 +329,7 @@ String_View def_to_sv(Def* def, size_t indent) {
 Term *parse_term(Lexer *lexer) {
     Term *result = calloc(1, sizeof(Term));
     Token token = next_token(lexer);
-    
+
     if (token.kind == TOKEN_ID) {
         result->as.word = token.as.id;
         result->kind = TERM_WORD;
@@ -341,7 +341,7 @@ Term *parse_term(Lexer *lexer) {
         result->kind = TERM_STRING_LIT;
     } else if (token.kind == TOKEN_LCURLY) {
         result->kind = TERM_QUOTATION;
-                    
+
         while (!accept_token(lexer, TOKEN_RCURLY)) {
             da_push(&result->as.quotation, parse_term(lexer));
         }
@@ -350,7 +350,7 @@ Term *parse_term(Lexer *lexer) {
         fprintf(stderr, SV_FMT" ERROR: expected term\n", SV_ARG(pos_sv));
         exit(1);
     }
-    
+
     return result;
 }
 
@@ -358,7 +358,7 @@ Def *parse_def(Lexer *lexer) {
     Def *result = calloc(1, sizeof(Def));
     expect_token(lexer, TOKEN_COLON);
     Token token = next_token(lexer);
- 
+
     if (token.kind == TOKEN_ID) {
         result->name = token.as.id;
     } else {
@@ -366,22 +366,78 @@ Def *parse_def(Lexer *lexer) {
         fprintf(stderr, SV_FMT" ERROR: expected identifier\n", SV_ARG(pos_sv));
         exit(1);
     }
-    
+
     while (!accept_token(lexer, TOKEN_SEMICOLON)) {
         da_push(&result->terms, parse_term(lexer));
     }
-    
+
     return result;
 }
 
 Program *parse_program(Lexer *lexer) {
     Program *result = calloc(1, sizeof(Program));
-    
+
     while (peek_token(lexer).kind != TOKEN_EOF) {
         da_push(result, parse_def(lexer));
     }
-    
+
     return result;
+}
+
+// --- COMPILE ---
+
+typedef struct {
+    String_Builder data;
+    String_Builder code;
+} Output;
+
+void compile_term(Term* term, String_Builder *code) {
+    switch (term->kind) {
+    case TERM_WORD:       sb_appendf(code, "    call "SV_FMT"\n", SV_ARG(term->as.word)); break;
+    case TERM_INT_LIT:
+        sb_appendf(code, "    mov qword [rbp], %d\n", term->as.int_lit);
+        sb_appendf(code, "    add rbp, 8\n", term->as.int_lit);
+        break;
+    case TERM_STRING_LIT:
+    case TERM_QUOTATION:
+        fprintf(stderr, "TODO: implement");
+        exit(1);
+    }
+}
+
+void compile_def(Def *def, String_Builder *code) {
+    sb_appendf(code, SV_FMT":\n", SV_ARG(def->name));
+
+    for (size_t i = 0; i < def->terms.count; i++) {
+        compile_term(def->terms.data[i], code);
+    }
+
+    sb_appendf(code, "    ret", SV_ARG(def->name));
+}
+
+String_View compile_program(Program *program) {
+    String_Builder sb = {0};
+    sb_appendf(&sb, "format ELF64 executable 3\n");
+    sb_appendf(&sb, "\n");
+    sb_appendf(&sb, "segment readable executable\n");
+    sb_appendf(&sb, "entry _start\n");
+    sb_appendf(&sb, "_start:\n");
+    sb_appendf(&sb, "    mov rbp, data_stack\n");
+    sb_appendf(&sb, "    call main\n");
+    sb_appendf(&sb, "    mov rax, 60\n");
+    sb_appendf(&sb, "    mov rdi, [rbp - 8]\n");
+    sb_appendf(&sb, "    syscall\n");
+    sb_appendf(&sb, "\n");
+
+    for (size_t i = 0; i < program->count; i++) {
+        compile_def(program->data[i], &sb);
+    }
+
+    sb_appendf(&sb, "\n");
+    sb_appendf(&sb, "segment readable writeable\n");
+    sb_appendf(&sb, "data_stack rd 8192\n");
+
+    return sv_from_sb(sb);
 }
 
 // --- MAIN ---
@@ -397,26 +453,8 @@ int main(int argc, char **argv) {
     Lexer lexer = {};
     lexer_init(&lexer, program_name);
     Program *program = parse_program(&lexer);
-    
-    for (size_t i = 0; i < program->count; i++) {
-        String_View def_sv = def_to_sv(program->data[i], 0);
-        printf(SV_FMT"\n", SV_ARG(def_sv));
-    }
-    
-    /*for (size_t i = 0; i < asts.count; i++) {
-        String_View ast_sv = ast_to_sv(asts.data[i]);
-        printf(SV_FMT"\n", SV_ARG(ast_sv));
-    }*/
-
-    /*while (true) {
-        Token token = next_token(&lexer);
-        if (token.kind == TOKEN_EOF) break;
-        String_View token_sv = token_to_sv(token);
-        printf(SV_FMT"\n", SV_ARG(token_sv));
-    }*/
-    //Stmt stmt = parse_stmt(&lexer);
-    //String_View stmt_sv = stmt_to_sv(stmt);
-    //printf(SV_FMT"\n", SV_ARG(stmt_sv));
+    String_View assembly = compile_program(program);
+    printf(SV_FMT, SV_ARG(assembly));
 
     return 0;
 }
