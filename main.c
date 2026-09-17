@@ -11,26 +11,27 @@ typedef struct {
     size_t col;
 } Position;
 
+String_View position_to_sv(Position pos) {
+    String_Builder sb = {0};
+    
+    sb_appendf(&sb, SV_FMT":", SV_ARG(pos.filename));
+    sb_appendf(&sb, "%zu:", pos.line);
+    sb_appendf(&sb, "%zu:", pos.col);
+    
+    return sv_from_sb(sb);
+}
+
 typedef enum {
     TOKEN_EOF,
     TOKEN_ID,
     TOKEN_COLON,
-    TOKEN_EQUAL,
-    TOKEN_COMMA,
-    TOKEN_OPEN_PAREN,
-    TOKEN_CLOSE_PAREN,
-    TOKEN_OPEN_CURLY,
-    TOKEN_CLOSE_CURLY,
-    TOKEN_RETURN,
-    TOKEN_IF,
-    TOKEN_ELSE,
-    TOKEN_FN,
-    TOKEN_STRUCT,
-    TOKEN_UNION,
+    TOKEN_SEMICOLON,
+    TOKEN_LPAREN,
+    TOKEN_RPAREN,
+    TOKEN_LCURLY,
+    TOKEN_RCURLY,
     TOKEN_INT_LIT,
     TOKEN_STRING_LIT,
-    TOKEN_SEMICOLON,
-    TOKEN_OP,
 } TokenKind;
 
 typedef struct {
@@ -39,7 +40,6 @@ typedef struct {
         String_View id;
         int int_lit;
         String_View string_lit;
-        String_View op;
     } as;
     Position pos;
 } Token;
@@ -76,25 +76,17 @@ String_View token_to_sv(Token token) {
     String_Builder sb = {};
     
     switch (token.kind) {
-    case TOKEN_EOF:         sb_appendf(&sb, "TOKEN_EOF"); break;
-    case TOKEN_ID:          sb_appendf(&sb, "TOKEN_ID("SV_FMT")", SV_ARG(token.as.id)); break;
-    case TOKEN_COLON:       sb_appendf(&sb, "TOKEN_COLON"); break;
-    case TOKEN_COMMA:       sb_appendf(&sb, "TOKEN_COMMA"); break;
-    case TOKEN_OPEN_PAREN:  sb_appendf(&sb, "TOKEN_OPEN_PAREN"); break;
-    case TOKEN_CLOSE_PAREN: sb_appendf(&sb, "TOKEN_CLOSE_PAREN"); break;
-    case TOKEN_OPEN_CURLY:  sb_appendf(&sb, "TOKEN_OPEN_CURLY"); break;
-    case TOKEN_CLOSE_CURLY: sb_appendf(&sb, "TOKEN_CLOSE_CURLY"); break;
-    case TOKEN_RETURN:      sb_appendf(&sb, "TOKEN_RETURN"); break;
-    case TOKEN_IF:          sb_appendf(&sb, "TOKEN_IF"); break;
-    case TOKEN_ELSE:        sb_appendf(&sb, "TOKEN_ELSE"); break;
-    case TOKEN_FN:          sb_appendf(&sb, "TOKEN_FN"); break;
-    case TOKEN_STRUCT:      sb_appendf(&sb, "TOKEN_STRUCT"); break;
-    case TOKEN_UNION:       sb_appendf(&sb, "TOKEN_UNION"); break;
-    case TOKEN_INT_LIT:     sb_appendf(&sb, "TOKEN_INT_LIT(%d)", token.as.int_lit); break;
-    case TOKEN_STRING_LIT:  sb_appendf(&sb, "TOKEN_STRING_LIT("SV_FMT")",
-                                       SV_ARG(token.as.string_lit)); break;
-    case TOKEN_SEMICOLON:   sb_appendf(&sb, "TOKEN_SEMICOLON"); break;
-    case TOKEN_OP:          sb_appendf(&sb, "TOKEN_OP("SV_FMT")", SV_ARG(token.as.op)); break;
+    case TOKEN_EOF:        sb_appendf(&sb, "TOKEN_EOF"); break;
+    case TOKEN_ID:         sb_appendf(&sb, "TOKEN_ID("SV_FMT")", SV_ARG(token.as.id)); break;
+    case TOKEN_COLON:      sb_appendf(&sb, "TOKEN_COLON"); break;
+    case TOKEN_SEMICOLON:  sb_appendf(&sb, "TOKEN_SEMICOLON"); break;
+    case TOKEN_LPAREN:     sb_appendf(&sb, "TOKEN_LPAREN"); break;
+    case TOKEN_RPAREN:     sb_appendf(&sb, "TOKEN_RPAREN"); break;
+    case TOKEN_LCURLY:     sb_appendf(&sb, "TOKEN_LCURLY"); break;
+    case TOKEN_RCURLY:     sb_appendf(&sb, "TOKEN_RCURLY"); break;
+    case TOKEN_INT_LIT:    sb_appendf(&sb, "TOKEN_INT_LIT(%d)", token.as.int_lit); break;
+    case TOKEN_STRING_LIT: sb_appendf(&sb, "TOKEN_STRING_LIT("SV_FMT")",
+                                      SV_ARG(token.as.string_lit)); break;
     default:
         fprintf(stderr, "UNREACHABLE\n");
         exit(1);
@@ -140,33 +132,18 @@ bool accept_char(Lexer *lexer, char ch) {
     return false;
 }
 
-Token read_id_or_keyword(Lexer *lexer) {
+Token read_id(Lexer *lexer) {
     Token token = {};
     String_Builder sb = {};
     
     token.pos = lexer->pos;
+    token.kind = TOKEN_ID;
 
-    while (isalnum(peek_char(lexer))) {
+    while (!isspace(peek_char(lexer)) && !strchr(":;(){}", peek_char(lexer))) {
         da_push(&sb, next_char(lexer));
     }
 
-    if (sv_eq_cstr(sv_from_sb(sb), "return")) {
-        token.kind = TOKEN_RETURN;
-    } else if (sv_eq_cstr(sv_from_sb(sb), "if")) {
-        token.kind = TOKEN_IF;
-    } else if (sv_eq_cstr(sv_from_sb(sb), "else")) {
-        token.kind = TOKEN_ELSE;
-    } else if (sv_eq_cstr(sv_from_sb(sb), "fn")) {
-        token.kind = TOKEN_FN;
-    } else if (sv_eq_cstr(sv_from_sb(sb), "struct")) {
-        token.kind = TOKEN_STRUCT;
-    } else if (sv_eq_cstr(sv_from_sb(sb), "union")) {
-        token.kind = TOKEN_UNION;
-    } else {
-        token.kind = TOKEN_ID;
-        token.as.id = sv_from_sb(sb);
-    }
-    
+    token.as.id = sv_from_sb(sb);
     return token;
 }
 
@@ -214,28 +191,13 @@ Token read_symbol(Lexer *lexer) {
     
     switch (ch) {
     case ':': token.kind = TOKEN_COLON; break;
-    case '=': {
-        if (accept_char(lexer, '=')) {
-            token.kind = TOKEN_OP;
-            token.as.op = sv_from_cstr("==");
-        } else {
-            token.kind = TOKEN_EQUAL;
-        }
-    } break;
-    case ',': token.kind = TOKEN_COMMA; break;
-    case '(': token.kind = TOKEN_OPEN_PAREN; break;
-    case ')': token.kind = TOKEN_CLOSE_PAREN; break;
-    case '{': token.kind = TOKEN_OPEN_CURLY; break;
-    case '}': token.kind = TOKEN_CLOSE_CURLY; break;
     case ';': token.kind = TOKEN_SEMICOLON; break;
+    case '(': token.kind = TOKEN_LPAREN; break;
+    case ')': token.kind = TOKEN_RPAREN; break;
+    case '{': token.kind = TOKEN_LCURLY; break;
+    case '}': token.kind = TOKEN_RCURLY; break;
     default:
-        token.kind = TOKEN_OP;
-        String_Builder sb = {};
-        da_push(&sb, ch);
-        while (strchr("+-*/!=<>", peek_char(lexer)) != NULL) {
-            da_push(&sb, next_char(lexer));
-        }
-        token.as.op = sv_from_sb(sb);
+        assert(false);
     }
     
     return token;
@@ -253,14 +215,14 @@ Token next_token(Lexer *lexer) {
 
     if (feof(lexer->fp)) {
     	return (Token) { .kind = TOKEN_EOF };
-    } else if (isalpha(peek_char(lexer))) {
-        return read_id_or_keyword(lexer);
+    } else if (strchr(":;(){}", peek_char(lexer))) {
+    	return read_symbol(lexer);
     } else if (isdigit(peek_char(lexer))) {
         return read_int_lit(lexer);
     } else if (peek_char(lexer) == '"') {
         return read_string_lit(lexer);
     } else {
-    	return read_symbol(lexer);
+        return read_id(lexer);
     }
 }
 
@@ -290,372 +252,135 @@ bool accept_token(Lexer *lexer, TokenKind kind) {
 
 // --- PARSER ---
 
-struct Ast;
+struct Term;
 
 typedef struct {
-    struct Ast **data;
+    struct Term **data;
     size_t count;
     size_t capacity;
-} Asts;
+} Terms; 
 
 typedef enum {
-    AST_ID,
-    AST_INT_LIT,
-    AST_STRING_LIT,
-    AST_CALL,
-    AST_OP,
-    AST_BLOCK,
-    AST_IFTE,
-    AST_DECL_MUT,
-    AST_DECL_CONST,
-    AST_FN,
-    AST_FN_TYPE,
-} AstKind;
+    TERM_WORD,
+    TERM_INT_LIT,
+    TERM_STRING_LIT,
+    TERM_QUOTATION,
+} TermKind;
 
-typedef struct {
-    String_View op;
-    struct Ast *lhs;
-    struct Ast *rhs;
-} Op;
-
-typedef struct {
-    struct Ast *fn;
-    Asts args;
-} Call;
-
-typedef struct {
-    struct Ast *cond;
-    struct Ast *then_branch;
-    struct Ast *else_branch;
-} Ifte;
-
-typedef struct {
-    String_View name;
-    struct Ast *type;
-    struct Ast *value;
-} Decl;
-
-typedef struct {
-    String_View name;
-    struct Ast *type;
-} Arg;
-
-typedef struct {
-    Arg *data;
-    size_t count;
-    size_t capacity;
-} Args;
-
-typedef struct {
-    Args args;
-    struct Ast *ret_type;
-    struct Ast *body;
-} Fn;
-
-typedef struct {
-    Asts args_types;
-    struct Ast *ret_type;
-} FnType;
-
-typedef struct Ast {
-    AstKind kind;
+typedef struct Term {
+    TermKind kind;
     union {
-        String_View id;
+        String_View word;
         int int_lit;
         String_View string_lit;
-        Op op;
-        Call call;
-        Asts block;
-        Ifte ifte;
-        Decl decl;
-        Fn fn;
-        FnType fn_type;
+        Terms quotation;
     } as;
-} Ast;
+} Term;
 
-String_View ast_to_sv(Ast *ast, size_t indent) {
+typedef struct {
+    String_View name;
+    Terms terms;
+} Def;
+
+typedef struct {
+    Def **data;
+    size_t count;
+    size_t capacity;
+} Program;
+
+String_View term_to_sv(Term *term, size_t indent) {
     String_Builder sb = {};
     
     for (size_t i = 0; i < indent; i++) sb_appendf(&sb, "    ");
     
-    switch (ast->kind) {
-    case AST_ID:         sb_appendf(&sb, "ID("SV_FMT")", SV_ARG(ast->as.id)); break;
-    case AST_INT_LIT:    sb_appendf(&sb, "INT(%d)", ast->as.int_lit); break;
-    case AST_STRING_LIT: sb_appendf(&sb, "STRING("SV_FMT")", SV_ARG(ast->as.string_lit)); break;
-    case AST_OP: {
-        String_View lhs_sv = ast_to_sv(ast->as.op.lhs, indent + 1);
-        String_View rhs_sv = ast_to_sv(ast->as.op.rhs, indent + 1);
-        sb_appendf(&sb, "OP("SV_FMT")\n", SV_ARG(ast->as.op.op));
-        sb_appendf(&sb, SV_FMT"\n", SV_ARG(lhs_sv));
-        sb_appendf(&sb, SV_FMT, SV_ARG(rhs_sv));
-    } break;
-    case AST_CALL: {
-        String_View fn_sv = ast_to_sv(ast->as.call.fn, indent + 1);
-        sb_appendf(&sb, "CALL\n");
-        sb_appendf(&sb, SV_FMT, SV_ARG(fn_sv));
+    switch (term->kind) {
+    case TERM_WORD:       sb_appendf(&sb, "WORD("SV_FMT")", SV_ARG(term->as.word)); break;
+    case TERM_INT_LIT:    sb_appendf(&sb, "INT(%d)", term->as.int_lit); break;
+    case TERM_STRING_LIT: sb_appendf(&sb, "STRING("SV_FMT")", SV_ARG(term->as.string_lit)); break;
+    case TERM_QUOTATION: {
+        sb_appendf(&sb, "QUOTATION\n");
         
-        for (size_t i = 0; i < ast->as.call.args.count; i++) {
-            String_View arg_sv = ast_to_sv(ast->as.call.args.data[i], indent + 1);
-            sb_appendf(&sb, "\n"SV_FMT, SV_ARG(arg_sv));
-        }
-    } break;
-    case AST_BLOCK: {
-        sb_appendf(&sb, "BLOCK\n");
-        
-        for (size_t i = 0; i < ast->as.block.count; i++) {
-            String_View expr_sv = ast_to_sv(ast->as.block.data[i], indent + 1);
-            sb_appendf(&sb, SV_FMT, SV_ARG(expr_sv));
-            if (i < ast->as.block.count - 1) sb_appendf(&sb, "\n");
-        }
-    } break;
-    case AST_IFTE: {
-        String_View cond_sv = ast_to_sv(ast->as.ifte.cond, indent + 1);
-        String_View then_sv = ast_to_sv(ast->as.ifte.then_branch, indent + 1);
-        sb_appendf(&sb, "IFTE\n");
-        sb_appendf(&sb, SV_FMT"\n", SV_ARG(cond_sv));
-        sb_appendf(&sb, SV_FMT"\n", SV_ARG(then_sv));
-        
-        if (ast->as.ifte.else_branch != NULL) {
-            String_View else_sv = ast_to_sv(ast->as.ifte.else_branch, indent + 1);
-            sb_appendf(&sb, SV_FMT, SV_ARG(else_sv));
-        }
-    } break;
-    case AST_DECL_CONST:
-    case AST_DECL_MUT: {
-        if (ast->kind == AST_DECL_CONST) {
-            sb_appendf(&sb, "DECL_CONST");
-        } else {
-            sb_appendf(&sb, "DECL_MUT");
-        }
-        
-        sb_appendf(&sb, "("SV_FMT")", SV_ARG(ast->as.decl.name));
-        
-        if (ast->as.decl.type != NULL) {
-            String_View type_sv = ast_to_sv(ast->as.decl.type, indent + 1);
-            sb_appendf(&sb, "\n"SV_FMT, SV_ARG(type_sv));
-        }
-        
-        if (ast->as.decl.value != NULL) {
-            String_View value_sv = ast_to_sv(ast->as.decl.value, indent + 1);
-            sb_appendf(&sb, "\n"SV_FMT, SV_ARG(value_sv));
-        }
-    } break;
-    case AST_FN: {
-        sb_appendf(&sb, "FN");
-        
-        for (size_t i = 0; i < ast->as.fn.args.count; i++) {
-            sb_appendf(&sb, "\n");
-            for (size_t i = 0; i < indent + 1; i++) sb_appendf(&sb, "    ");
-            sb_appendf(&sb, SV_FMT, SV_ARG(ast->as.fn.args.data[i].name));
-            String_View arg_type_sv = ast_to_sv(ast->as.fn.args.data[i].type, indent + 1);
-            sb_appendf(&sb, "\n"SV_FMT, SV_ARG(arg_type_sv));
-        }
-        
-        if (ast->as.fn.ret_type != NULL) {
-            String_View ret_type_sv = ast_to_sv(ast->as.fn.ret_type, indent + 1);
-            sb_appendf(&sb, "\n"SV_FMT, SV_ARG(ret_type_sv));
-        }
-        
-        String_View body_sv = ast_to_sv(ast->as.fn.body, indent + 1);
-        sb_appendf(&sb, "\n"SV_FMT, SV_ARG(body_sv));
-    } break;
-    case AST_FN_TYPE: {
-        sb_appendf(&sb, "FN_TYPE");
-        
-        for (size_t i = 0; i < ast->as.fn_type.args_types.count; i++) {
-            String_View arg_type_sv = ast_to_sv(ast->as.fn_type.args_types.data[i], indent + 1);
-            sb_appendf(&sb, "\n"SV_FMT, SV_ARG(arg_type_sv));
-        }
-        
-        if (ast->as.fn.ret_type != NULL) {
-            String_View ret_type_sv = ast_to_sv(ast->as.fn.ret_type, indent + 1);
-            sb_appendf(&sb, "\n"SV_FMT, SV_ARG(ret_type_sv));
+        for (size_t i = 0; i < term->as.quotation.count; i++) {
+            String_View term_sv = term_to_sv(term->as.quotation.data[i], indent + 1);
+            sb_appendf(&sb, SV_FMT, SV_ARG(term_sv));
+            if (i < term->as.quotation.count - 1) sb_appendf(&sb, "\n");
         }
     } break;
     }
-    
+
     return sv_from_sb(sb);
 }
 
-Ast *parse_type(Lexer *lexer) {
-    Ast *result;
-    Token token = next_token(lexer);
+String_View def_to_sv(Def* def, size_t indent) {
+    String_Builder sb = {};
     
-    if (token.kind == TOKEN_ID) {
-        result = calloc(1, sizeof(Ast));
-        result->kind = AST_ID;
-        result->as.id = token.as.id;
-    } else if (token.kind == TOKEN_FN) {
-        result = calloc(1, sizeof(Ast));
-        result->kind = AST_FN_TYPE;
-        expect_token(lexer, TOKEN_OPEN_PAREN);
-        
-        while (!accept_token(lexer, TOKEN_CLOSE_PAREN)) {
-            da_push(&result->as.fn_type.args_types, parse_type(lexer));
-            
-            if (peek_token(lexer).kind != TOKEN_CLOSE_PAREN) {
-                expect_token(lexer, TOKEN_COMMA);
-            }
-        }
-        
-        if (peek_token(lexer).kind == TOKEN_OP && sv_eq(peek_token(lexer).as.op, sv_from_cstr("->"))) {
-            next_token(lexer);
-            result->as.fn_type.ret_type = parse_type(lexer);
-        }
-    } else {
-        fprintf(stderr, "Error: syntax error\n");
-        exit(1);
+    for (size_t i = 0; i < indent; i++) sb_appendf(&sb, "    ");
+    
+    sb_appendf(&sb, "DEF "SV_FMT"\n", SV_ARG(def->name));
+    for (size_t i = 0; i < def->terms.count; i++) {
+        String_View term_sv = term_to_sv(def->terms.data[i], indent + 1);
+        sb_appendf(&sb, SV_FMT, SV_ARG(term_sv));
+        if (i < def->terms.count - 1) sb_appendf(&sb, "\n");
     }
-    
-    if (accept_token(lexer, TOKEN_OPEN_PAREN)) {
-        Ast *new_result = calloc(1, sizeof(Ast));
-        new_result->kind = AST_CALL;
-        new_result->as.call.fn = result;
-        result = new_result;
-        
-        while (!accept_token(lexer, TOKEN_CLOSE_PAREN)) {
-            da_push(&result->as.call.args, parse_type(lexer));
-            if (peek_token(lexer).kind != TOKEN_CLOSE_PAREN) {
-                expect_token(lexer, TOKEN_COMMA);
-            }
-        }
-    }
-    
-    return result;
+
+    return sv_from_sb(sb);
 }
 
-Ast *parse_expr(Lexer *lexer, size_t precedence);
-
-Ast *parse_factor(Lexer *lexer) {
-    Ast *result;
+Term *parse_term(Lexer *lexer) {
+    Term *result = calloc(1, sizeof(Term));
     Token token = next_token(lexer);
     
     if (token.kind == TOKEN_ID) {
-        result = calloc(1, sizeof(Ast));
-        
-        if (accept_token(lexer, TOKEN_COLON)) {
-            result->kind = AST_DECL_MUT;
-            result->as.decl.name = token.as.id;
-            
-            if (peek_token(lexer).kind != TOKEN_COLON &&
-                peek_token(lexer).kind != TOKEN_EQUAL) {
-                result->as.decl.type = parse_type(lexer);
-            }
-            
-            if (accept_token(lexer, TOKEN_EQUAL)) {
-                result->as.decl.value = parse_expr(lexer, 0);
-            } else if (accept_token(lexer, TOKEN_COLON)) {
-                result->kind = AST_DECL_CONST;
-                result->as.decl.value = parse_expr(lexer, 0);
-            }
-        } else {
-            result->kind = AST_ID;
-            result->as.id = token.as.id;
-        }
+        result->as.word = token.as.id;
+        result->kind = TERM_WORD;
     } else if (token.kind == TOKEN_INT_LIT) {
-        result = calloc(1, sizeof(Ast));
-        result->kind = AST_INT_LIT;
         result->as.int_lit = token.as.int_lit;
+        result->kind = TERM_INT_LIT;
     } else if (token.kind == TOKEN_STRING_LIT) {
-        result = calloc(1, sizeof(Ast));
-        result->kind = AST_STRING_LIT;
         result->as.string_lit = token.as.string_lit;
-    } else if (token.kind == TOKEN_OPEN_PAREN) {
-        result = parse_expr(lexer, 0);
-        expect_token(lexer, TOKEN_CLOSE_PAREN);
-    } else if (token.kind == TOKEN_OPEN_CURLY) {
-        result = calloc(1, sizeof(Ast));
-        result->kind = AST_BLOCK;
-        
-        while (!accept_token(lexer, TOKEN_CLOSE_CURLY)) {
-            da_push(&result->as.block, parse_expr(lexer, 0));
-            /*if (peek_token(lexer).kind != TOKEN_CLOSE_CURLY) {
-                expect_token(lexer, TOKEN_SEMICOLON);
-            }*/
+        result->kind = TERM_STRING_LIT;
+    } else if (token.kind == TOKEN_LCURLY) {
+        result->kind = TERM_QUOTATION;
+                    
+        while (!accept_token(lexer, TOKEN_RCURLY)) {
+            da_push(&result->as.quotation, parse_term(lexer));
         }
-    } else if (token.kind == TOKEN_IF) {
-        result = calloc(1, sizeof(Ast));
-        result->kind = AST_IFTE;
-        result->as.ifte.cond = parse_expr(lexer, 0);
-        result->as.ifte.then_branch = parse_expr(lexer, 0);
-        if (accept_token(lexer, TOKEN_ELSE)) {
-            result->as.ifte.else_branch = parse_expr(lexer, 0);
-        }
-    } else if (token.kind == TOKEN_FN) {
-        result = calloc(1, sizeof(Ast));
-        result->kind = AST_FN;
-        expect_token(lexer, TOKEN_OPEN_PAREN);
-        
-        while (!accept_token(lexer, TOKEN_CLOSE_PAREN)) {
-            Arg arg = {};
-            assert(peek_token(lexer).kind == TOKEN_ID);
-            arg.name = next_token(lexer).as.id;
-            expect_token(lexer, TOKEN_COLON);
-            arg.type = parse_type(lexer);
-            da_push(&result->as.fn.args, arg);
-            
-            if (peek_token(lexer).kind != TOKEN_CLOSE_PAREN) {
-                expect_token(lexer, TOKEN_COMMA);
-            }
-        }
-        
-        if (peek_token(lexer).kind == TOKEN_OP && sv_eq(peek_token(lexer).as.op, sv_from_cstr("->"))) {
-            next_token(lexer);
-            result->as.fn.ret_type = parse_type(lexer);
-        }
-        
-        result->as.fn.body = parse_expr(lexer, 0);
     } else {
-        fprintf(stderr, "Error: syntax error\n");
+        String_View pos_sv = position_to_sv(token.pos);
+        fprintf(stderr, SV_FMT" ERROR: expected term\n", SV_ARG(pos_sv));
         exit(1);
     }
     
-    if (accept_token(lexer, TOKEN_OPEN_PAREN)) {
-        Ast *new_result = calloc(1, sizeof(Ast));
-        new_result->kind = AST_CALL;
-        new_result->as.call.fn = result;
-        result = new_result;
-        
-        while (!accept_token(lexer, TOKEN_CLOSE_PAREN)) {
-            da_push(&result->as.call.args, parse_expr(lexer, 0));
-            if (peek_token(lexer).kind != TOKEN_CLOSE_PAREN) {
-                expect_token(lexer, TOKEN_COMMA);
-            }
-        }
-    }
-
     return result;
 }
 
-Ast *parse_expr(Lexer *lexer, size_t precedence) {
-    Ast *result = precedence == 4 ? parse_factor(lexer)
-                                  : parse_expr(lexer, precedence + 1);
-    
-    while (peek_token(lexer).kind == TOKEN_OP && (
-        (precedence == 3 && (
-            sv_eq_cstr(peek_token(lexer).as.op, "."))) ||
-        (precedence == 2 && (
-            sv_eq_cstr(peek_token(lexer).as.op, "*") ||
-            sv_eq_cstr(peek_token(lexer).as.op, "/"))) ||
-        (precedence == 1 && (
-            sv_eq_cstr(peek_token(lexer).as.op, "+") ||
-            sv_eq_cstr(peek_token(lexer).as.op, "-"))) ||
-        (precedence == 0 && (
-            sv_eq_cstr(peek_token(lexer).as.op, "<") ||
-            sv_eq_cstr(peek_token(lexer).as.op, ">") ||
-            sv_eq_cstr(peek_token(lexer).as.op, "<=") ||
-            sv_eq_cstr(peek_token(lexer).as.op, ">=") ||
-            sv_eq_cstr(peek_token(lexer).as.op, "==") ||
-            sv_eq_cstr(peek_token(lexer).as.op, "!=")))
-    )) {
-        Ast *new_result = calloc(1, sizeof(Ast));
-        new_result->kind = AST_OP;
-        new_result->as.op.lhs = result;
-        new_result->as.op.op = next_token(lexer).as.op;
-        new_result->as.op.rhs = parse_expr(lexer, precedence + 1);
-        result = new_result;
+Def *parse_def(Lexer *lexer) {
+    Def *result = calloc(1, sizeof(Def));
+    expect_token(lexer, TOKEN_COLON);
+    Token token = next_token(lexer);
+ 
+    if (token.kind == TOKEN_ID) {
+        result->name = token.as.id;
+    } else {
+        String_View pos_sv = position_to_sv(token.pos);
+        fprintf(stderr, SV_FMT" ERROR: expected identifier\n", SV_ARG(pos_sv));
+        exit(1);
     }
+    
+    while (!accept_token(lexer, TOKEN_SEMICOLON)) {
+        da_push(&result->terms, parse_term(lexer));
+    }
+    
+    return result;
+}
 
+Program *parse_program(Lexer *lexer) {
+    Program *result = calloc(1, sizeof(Program));
+    
+    while (peek_token(lexer).kind != TOKEN_EOF) {
+        da_push(result, parse_def(lexer));
+    }
+    
     return result;
 }
 
@@ -671,12 +396,11 @@ int main(int argc, char **argv) {
 
     Lexer lexer = {};
     lexer_init(&lexer, program_name);
+    Program *program = parse_program(&lexer);
     
-    while (peek_token(&lexer).kind != TOKEN_EOF) {
-        Ast *ast = parse_expr(&lexer, 0);
- 
-        String_View ast_sv = ast_to_sv(ast, 0);
-        printf(SV_FMT"\n", SV_ARG(ast_sv));
+    for (size_t i = 0; i < program->count; i++) {
+        String_View def_sv = def_to_sv(program->data[i], 0);
+        printf(SV_FMT"\n", SV_ARG(def_sv));
     }
     
     /*for (size_t i = 0; i < asts.count; i++) {
